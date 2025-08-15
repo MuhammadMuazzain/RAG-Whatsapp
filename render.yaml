@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: vitiligo-chatbot
+    runtime: docker
+    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
+    branch: main
+    envVars:
+      - key: OLLAMA_HOST
+        value: http://localhost:11435
+    buildCommand: docker build -t chatbot .
+    startCommand: ollama serve & uvicorn main:app --host 0.0.0.0 --port $PORT

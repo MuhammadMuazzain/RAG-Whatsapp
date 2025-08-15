@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(timeout 2 sleep 2)",
+      "Bash(dir vector_store)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

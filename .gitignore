@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# .gitignore
+.venv/
+__pycache__/
+*.pyc
+.env
+*.sqlite3
+.DS_Store
+
+
+# Vector store
+vector_store/
+*.index
+chunks.json
+
+# Config with secrets
+config.json
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test files
+test_*.pdf
+*.pdf.
