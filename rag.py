@@ -338,8 +338,8 @@ Answer (ONLY from context, NO external knowledge):"""
         # Much shorter limits
         # max_tokens = {"brief": 50, "moderate": 75, "detailed": 150}.get(response_style, 75)
         # max_chars = {"brief": 150, "moderate": 250, "detailed": 500}.get(response_style, 250)
-        max_tokens = {"brief": 100, "moderate": 200, "detailed": 400}
-        max_chars = {"brief": 300, "moderate": 600, "detailed": 1200}
+        max_tokens = {"brief": 100, "moderate": 200, "detailed": 400}.get(response_style, 200)
+        max_chars = {"brief": 300, "moderate": 600, "detailed": 1200}.get(response_style, 600)
         
         for chunk in self.query_stream(prompt, max_tokens=max_tokens):
             response += chunk

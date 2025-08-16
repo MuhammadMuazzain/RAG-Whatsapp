@@ -133,10 +133,58 @@ async def chat_stream_endpoint(request: ChatRequest):
             # For everything else, use RAG
             response_style = result['response_style']
             
-            # Stream the RAG response
-            for chunk in rag_engine.query_with_stream(request.message, response_style=response_style):
-                yield chunk
-                await asyncio.sleep(0)  # Allow other coroutines to run
+            # Track if we should show support link
+            should_show_link = conversation_manager.should_show_support_link(request.message, result['context'])
+            logger.info(f"Streaming endpoint - Should show link: {should_show_link} for: {request.message[:50]}")
+            
+            # Collect the response to control length if link needs to be added
+            if should_show_link:
+                # Collect full response first to truncate if needed
+                full_response = ""
+                max_length_without_link = 400  # Same as non-streaming endpoint
+                
+                for chunk in rag_engine.query_with_stream(request.message, response_style=response_style):
+                    # Extract content from SSE format
+                    if chunk.startswith("data: "):
+                        try:
+                            data = json.loads(chunk[6:chunk.find('\n')])
+                            if data.get("content"):
+                                full_response += data["content"]
+                        except:
+                            pass
+                
+                # Truncate if needed to fit link
+                if len(full_response) > max_length_without_link:
+                    truncated = full_response[:max_length_without_link]
+                    last_period = truncated.rfind('.')
+                    if last_period > 0:
+                        full_response = truncated[:last_period + 1]
+                    else:
+                        full_response = truncated + "..."
+                
+                # Add the link to the response
+                link_message = "\n\nFor community support and to connect with others, visit: vitiligosupportgroup.com"
+                full_response_with_link = full_response + link_message
+                
+                # Stream the combined response word by word for smooth display
+                words = full_response_with_link.split(' ')
+                for i, word in enumerate(words):
+                    if i > 0:
+                        yield f"data: {{\"content\": \" {word}\"}}\n\n"
+                    else:
+                        yield f"data: {{\"content\": \"{word}\"}}\n\n"
+                    await asyncio.sleep(0.01)  # Small delay for smooth streaming
+                
+                result['context'].support_link_shown = True
+                logger.info(f"Support link added to streaming response. Total length: {len(full_response_with_link)}")
+                
+                # Send done signal
+                yield f"data: {{\"done\": true}}\n\n"
+            else:
+                # Normal streaming without link
+                for chunk in rag_engine.query_with_stream(request.message, response_style=response_style):
+                    yield chunk
+                    await asyncio.sleep(0)  # Allow other coroutines to run
                 
         except Exception as e:
             logger.error(f"Error in streaming: {e}")
@@ -184,11 +232,41 @@ async def chat_endpoint(request: ChatRequest):
         response_style = conv_result['response_style']
         result = rag_engine.query(request.message, response_style=response_style)
         
-        # Format response based on style
-        response_text = conversation_manager.format_response(
-            result.get("response", "I couldn't find an answer to your question."),
-            response_style
-        )
+        # Get raw response first
+        raw_response = result.get("response", "I couldn't find an answer to your question.")
+        
+        # Check if we should add support group link BEFORE formatting
+        should_show = conversation_manager.should_show_support_link(request.message, conv_result['context'])
+        logger.info(f"Should show support link: {should_show} for message: {request.message[:50]}")
+        
+        # TEMPORARY: Force link to show for vitiligo queries for debugging
+        if 'vitiligo' in request.message.lower() and not conv_result['context'].support_link_shown:
+            should_show = True
+            logger.info("FORCING link to show for vitiligo query")
+        
+        # Calculate space for link
+        link_text = "\n\nFor community support and to connect with others, visit: vitiligosupportgroup.com"
+        
+        if should_show:
+            # IMPORTANT: Truncate response to ensure link fits
+            # Reserve space for the link (about 90 characters)
+            max_length_without_link = 400  # Adjust this based on your needs
+            
+            if len(raw_response) > max_length_without_link:
+                # Find last complete sentence before limit
+                truncated = raw_response[:max_length_without_link]
+                last_period = truncated.rfind('.')
+                if last_period > 0:
+                    raw_response = truncated[:last_period + 1]
+                else:
+                    raw_response = truncated + "..."
+            
+            # Now add link - it will definitely fit
+            raw_response += link_text
+            conv_result['context'].support_link_shown = True
+            logger.info(f"Support link added. Final length: {len(raw_response)}")
+        
+        response_text = raw_response
         
         # Add to conversation history
         conv_result['context'].add_message("assistant", response_text)
@@ -255,6 +333,37 @@ async def api_health():
         "status": "running",
         "service": "RAG WhatsApp Bot",
         "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/test-link")
+async def test_link():
+    """Test endpoint to verify link functionality"""
+    if not rag_engine or not conversation_manager:
+        return {"error": "Services not initialized"}
+    
+    message = "What is vitiligo?"
+    session_id = "test_endpoint"
+    
+    # Process message
+    conv_result = conversation_manager.process_message(message, session_id)
+    
+    # Get RAG response
+    result = rag_engine.query(message)
+    response = result.get("response", "No response")
+    
+    # Check if should show link
+    should_show = conversation_manager.should_show_support_link(message, conv_result['context'])
+    
+    # Add link if needed
+    if should_show:
+        response += conversation_manager.support_link
+        conv_result['context'].support_link_shown = True
+    
+    return {
+        "message": message,
+        "should_show_link": should_show,
+        "link_in_response": "vitiligosupportgroup.com" in response,
+        "response_preview": response[-200:] if len(response) > 200 else response
     }
 
 @app.get("/api/sessions")
@@ -511,8 +620,23 @@ async def whatsapp_webhook(request: Request):
             return JSONResponse({"status": "error", "reason": "RAG not initialized"})
 
         try:
+            # Get or create session for this phone number
+            if conversation_manager:
+                session = conversation_manager.get_or_create_session(f"whatsapp_{from_number}")
+                
+                # Check if we should show support link
+                should_show_link = conversation_manager.should_show_support_link(text, session)
+            else:
+                should_show_link = False
+            
             result = rag_engine.query(text)
             response_text = result.get("response", "Sorry, I couldn't find a response.")
+            
+            # Add support link if appropriate
+            if should_show_link and conversation_manager:
+                response_text += conversation_manager.support_link
+                session.support_link_shown = True
+            
             if len(response_text) > 4000:
                 response_text = response_text[:3997] + "..."
             success = send_whatsapp_reply(from_number, response_text)
@@ -545,8 +669,23 @@ async def whatsapp_webhook(request: Request):
             return JSONResponse({"status": "error", "reason": "RAG not initialized"})
 
         try:
+            # Get or create session for this phone number
+            if conversation_manager:
+                session = conversation_manager.get_or_create_session(f"whatsapp_{from_number}")
+                
+                # Check if we should show support link
+                should_show_link = conversation_manager.should_show_support_link(text, session)
+            else:
+                should_show_link = False
+            
             result = rag_engine.query(text)
             response_text = result.get("response", "Sorry, no response found.")
+            
+            # Add support link if appropriate
+            if should_show_link and conversation_manager:
+                response_text += conversation_manager.support_link
+                session.support_link_shown = True
+            
             if len(response_text) > 4000:
                 response_text = response_text[:3997] + "..."
             success = send_whatsapp_reply(from_number, response_text)

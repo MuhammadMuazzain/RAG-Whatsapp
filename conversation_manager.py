@@ -162,13 +162,17 @@ class ConversationContext:
             "response_length": "moderate",
             "detail_level": "auto"
         }
+        # Track if support group link has been shown
+        self.support_link_shown = False
+        self.is_first_vitiligo_question = True
     
-    def add_message(self, role: str, content: str, intent: str = None):
+    def add_message(self, role: str, content: str, intent: str = None, topic_type: str = None):
         """Add a message to conversation history"""
         self.history.append({
             "role": role,
             "content": content,
             "intent": intent,
+            "topic_type": topic_type,
             "timestamp": datetime.now().isoformat()
         })
         self.last_activity = datetime.now()
@@ -232,6 +236,8 @@ class ConversationManager:
             "Bye! Feel free to come back if you have more questions.",
             "Take care! Wishing you good health!",
         ]
+        # Support group link
+        self.support_link = "\n\nFor community support and to connect with others, visit: vitiligosupportgroup.com"
     
     def get_or_create_session(self, session_id: str = None) -> ConversationContext:
         """Get existing session or create new one"""
@@ -248,6 +254,45 @@ class ConversationManager:
             self.sessions[session_id] = ConversationContext(session_id)
         
         return self.sessions[session_id]
+    
+    def is_nsc_trial_query(self, message: str) -> bool:
+        """Check if message is about NSC trials or free consultation"""
+        message_lower = message.lower()
+        nsc_keywords = [
+            'nsc', 'national skin centre', 'trial', 'free', 'cream', 
+            'ruxolitinib', 'jak', 'sign up', 'consultation', 'subsidised',
+            'eligible', 'referral', 'polyclinic', 'chas'
+        ]
+        return any(keyword in message_lower for keyword in nsc_keywords)
+    
+    def is_vitiligo_query(self, message: str) -> bool:
+        """Check if message is about vitiligo"""
+        message_lower = message.lower()
+        vitiligo_keywords = [
+            'vitiligo', 'white spot', 'white patch', 'pigment', 'melanocyte',
+            'skin condition', 'depigmentation', 'leucoderma'
+        ]
+        return any(keyword in message_lower for keyword in vitiligo_keywords)
+    
+    def should_show_support_link(self, message: str, context: ConversationContext) -> bool:
+        """Determine if support group link should be shown"""
+        # Don't show if already shown
+        if context.support_link_shown:
+            return False
+        
+        # Don't show for NSC/trial queries
+        if self.is_nsc_trial_query(message):
+            return False
+        
+        # Show for vitiligo-related queries or general medical questions after greeting
+        if self.is_vitiligo_query(message):
+            return True
+        
+        # If this is the first real question after greeting
+        if context.last_intent == "greeting" and len(context.history) > 1:
+            return True
+        
+        return False
     
     def process_message(self, message: str, session_id: str = None) -> Dict:
         """
