@@ -154,8 +154,10 @@ class RAGEngine:
         
         # Style-specific instructions - MUCH MORE STRICT
         style_instructions = {
-            "brief": "Answer in EXACTLY 1-2 SHORT sentences only. Maximum 30 words total.",
-            "moderate": "Answer in EXACTLY 2-3 SHORT sentences only. Maximum 50 words total. Be direct.",
+            # "brief": "Answer in EXACTLY 1-2 SHORT sentences only. Maximum 30 words total.",
+            # "moderate": "Answer in EXACTLY 2-3 SHORT sentences only. Maximum 50 words total. Be direct.",
+            "brief": "Answer in 2-3 sentences. Maximum 60 words.",
+            "moderate": "Answer in 3-5 sentences. Maximum 100 words.",
             "detailed": "Answer in 4-5 sentences maximum. Include key details but stay under 100 words."
         }
         
@@ -334,8 +336,10 @@ Answer (ONLY from context, NO external knowledge):"""
         # Generate response with STRICT length control
         response = ""
         # Much shorter limits
-        max_tokens = {"brief": 50, "moderate": 75, "detailed": 150}.get(response_style, 75)
-        max_chars = {"brief": 150, "moderate": 250, "detailed": 500}.get(response_style, 250)
+        # max_tokens = {"brief": 50, "moderate": 75, "detailed": 150}.get(response_style, 75)
+        # max_chars = {"brief": 150, "moderate": 250, "detailed": 500}.get(response_style, 250)
+        max_tokens = {"brief": 100, "moderate": 200, "detailed": 400}
+        max_chars = {"brief": 300, "moderate": 600, "detailed": 1200}
         
         for chunk in self.query_stream(prompt, max_tokens=max_tokens):
             response += chunk
