@@ -135,7 +135,9 @@ async def chat_stream_endpoint(request: ChatRequest):
             
             # Track if we should show support link
             should_show_link = conversation_manager.should_show_support_link(request.message, result['context'])
-            logger.info(f"Streaming endpoint - Should show link: {should_show_link} for: {request.message[:50]}")
+            
+            # Check if this is a doc3 query (we'll detect it from the first chunk)
+            is_doc3_query = False
             
             # Collect the response to control length if link needs to be added
             if should_show_link:

@@ -143,6 +143,14 @@ class RAGEngine:
     
     def format_prompt(self, query: str, context_chunks: List[str], response_style: str = "moderate") -> str:
         """Format prompt for Mistral with context and query"""
+        # Check if any chunks are from doc3 (JAK cream trial information)
+        is_doc3_query = any("JAK" in chunk and "NSC" in chunk and "trial" in chunk.lower() for chunk in context_chunks)
+        
+        # Override response style to detailed for doc3 queries
+        if is_doc3_query:
+            response_style = "detailed"
+            logger.info("Doc3 content detected - switching to detailed response style")
+        
         # Limit context based on response style
         if response_style == "brief":
             context_chunks = context_chunks[:1]  # Use only most relevant chunk
@@ -158,12 +166,35 @@ class RAGEngine:
             # "moderate": "Answer in EXACTLY 2-3 SHORT sentences only. Maximum 50 words total. Be direct.",
             "brief": "Answer in 2-3 sentences. Maximum 60 words.",
             "moderate": "Answer in 3-5 sentences. Maximum 100 words.",
-            "detailed": "Answer in 4-5 sentences maximum. Include key details but stay under 100 words."
+            "detailed": "Provide a comprehensive answer with step-by-step details when available. Include all important information from the context. Maximum 300 words."
         }
         
         instruction = style_instructions.get(response_style, style_instructions["moderate"])
         
-        prompt = f"""You are a medical information assistant. You MUST ONLY use the exact information provided.
+        # Special instructions for doc3 content
+        if is_doc3_query:
+            prompt = f"""You are a medical information assistant providing detailed information about the JAK cream trial.
+
+CRITICAL RULES:
+1. Provide COMPREHENSIVE details with step-by-step instructions when available.
+2. Include ALL relevant information from the Context below, especially:
+   - Eligibility criteria
+   - Step-by-step enrollment process
+   - Contact information
+   - Important notes and FAQs
+3. ONLY use information that is EXPLICITLY stated in the Context below.
+4. If specific details are asked but NOT in the context, say "I don't have that specific information."
+5. NEVER make up information.
+6. Format the response clearly with sections or bullet points when appropriate.
+
+Context from documents:
+{context}
+
+User Question: {query}
+
+Detailed Answer (provide comprehensive information from context):"""
+        else:
+            prompt = f"""You are a medical information assistant. You MUST ONLY use the exact information provided.
 
 CRITICAL RULES:
 1. {instruction}
@@ -330,16 +361,26 @@ Answer (ONLY from context, NO external knowledge):"""
         # Extract just the chunk texts
         context_chunks = [chunk for chunk, score in search_results]
         
+        # Check if this is a doc3 query (JAK cream trial)
+        is_doc3_query = any("JAK" in chunk and "NSC" in chunk and "trial" in chunk.lower() for chunk in context_chunks)
+        
+        # Override response style for doc3 queries
+        if is_doc3_query:
+            response_style = "detailed"
+            logger.info("Doc3 query detected - using detailed response style")
+        
         # Format prompt with style
         prompt = self.format_prompt(user_query, context_chunks, response_style)
         
         # Generate response with STRICT length control
         response = ""
-        # Much shorter limits
-        # max_tokens = {"brief": 50, "moderate": 75, "detailed": 150}.get(response_style, 75)
-        # max_chars = {"brief": 150, "moderate": 250, "detailed": 500}.get(response_style, 250)
-        max_tokens = {"brief": 100, "moderate": 200, "detailed": 400}.get(response_style, 200)
-        max_chars = {"brief": 300, "moderate": 600, "detailed": 1200}.get(response_style, 600)
+        # Much shorter limits - but extended for doc3 queries
+        if is_doc3_query:
+            max_tokens = 800  # More tokens for detailed doc3 responses
+            max_chars = 2400  # More characters for detailed doc3 responses
+        else:
+            max_tokens = {"brief": 100, "moderate": 200, "detailed": 400}.get(response_style, 200)
+            max_chars = {"brief": 300, "moderate": 600, "detailed": 1200}.get(response_style, 600)
         
         for chunk in self.query_stream(prompt, max_tokens=max_tokens):
             response += chunk
@@ -361,10 +402,11 @@ Answer (ONLY from context, NO external knowledge):"""
                 {"chunk": chunk, "score": score} 
                 for chunk, score in search_results
             ],
-            "processing_time": time.time() - start_time
+            "processing_time": time.time() - start_time,
+            "is_doc3_query": is_doc3_query
         }
         
-        logger.info(f"Query processed in {result['processing_time']:.2f} seconds")
+        logger.info(f"Query processed in {result['processing_time']:.2f} seconds (doc3: {is_doc3_query})")
         return result
     
 
@@ -379,16 +421,30 @@ Answer (ONLY from context, NO external knowledge):"""
             # Extract just the chunk texts
             context_chunks = [chunk for chunk, score in search_results]
             
+            # Check if this is a doc3 query (JAK cream trial)
+            is_doc3_query = any("JAK" in chunk and "NSC" in chunk and "trial" in chunk.lower() for chunk in context_chunks)
+            
+            # Override response style for doc3 queries
+            if is_doc3_query:
+                response_style = "detailed"
+                logger.info("Doc3 query detected in streaming - using detailed response style")
+            
             # Format prompt with context and style
             prompt = self.format_prompt(user_query, context_chunks, response_style)
             
+            # Set appropriate max tokens for doc3 queries
+            if is_doc3_query:
+                max_tokens = 800
+            else:
+                max_tokens = {"brief": 100, "moderate": 200, "detailed": 400}.get(response_style, 200)
+            
             # Stream the response
-            for chunk in self.query_stream(prompt):
+            for chunk in self.query_stream(prompt, max_tokens=max_tokens):
                 if chunk:  # Only yield non-empty chunks
                     yield f"data: {json.dumps({'content': chunk})}\n\n"
             
-            # Send end signal
-            yield f"data: {json.dumps({'done': True})}\n\n"
+            # Send end signal with doc3 indicator
+            yield f"data: {json.dumps({'done': True, 'is_doc3_query': is_doc3_query})}\n\n"
             
         except Exception as e:
             logger.error(f"Error in streaming query: {e}")
